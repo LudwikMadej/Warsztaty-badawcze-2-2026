@@ -85,6 +85,132 @@ Classification-free CAVs are created based on statistics and do not assume any s
 
 ## SAE-based
 
+### SAS (Sparse Activation Steering)
+
+#### **Introduction & Motivation:** 
+While Large Language Models (LLMs) generate fluent text, precise behavioral control—such as modulating hallucinations—remains difficult due to the lack of flexibility and interpretability in traditional alignment methods like RLHF (Reinforcement Learning from Human Feedback). *Activation steering* offers a runtime alternative, yet conventional dense methods are hindered by **superposition** (it is a phenomenon where neural networks compress more concepts than they have available dimensions, causing multiple unrelated features to become "entangled" within the same neurons and making it impossible to precisely isolate or control a single behavior without unintentionally affecting others.). One way to solve adress this problem is **Sparse Activation Steering (SAS)** framework. By utilizing Sparse Autoencoders (SAEs), SAS decomposes dense activations into a structured dictionary of disentangled, monosemantic features, enabling highly precise, modular, and interpretable interventions. Our key contributions include a novel steering framework for reinforcing or suppressing specific behaviors, empirical evidence that scaling SAE dictionary sizes enhances feature clarity, and a demonstration of feature compositionality for simultaneous multi-behavior control.
+
+**How SAS Vector Generation Works (6-Step Process):**
+1. **Contrastive Pairs:** Construct a pair of prompts where one completion shows the desired behavior (positive) and the other its exact opposite (negative).
+2. **Sparse Extraction:** Extract sparse representations of the model's activations using an SAE encoder $f(a)$.
+3. **Filtering:** Remove inactive features using an activation frequency threshold $\tau$.
+4. **Isolate Specifics:** Turn off shared features between the positive and negative representations to isolate components specific to the target behavior.
+5. **Mean Calculation:** Compute the mean activation vectors from the remaining sparse matrices.
+6. **Final Vector Construction:** Subtract the negative mean vector from the positive mean vector. The resulting SAS vector reinforces the intended behavior while suppressing contradicting tendencies.
+
+#### **Background: Activation Steering & Sparse Autoencoders**
+
+**Activation Steering**
+Activation steering is an inference-time intervention that modifies LLM latent representations to guide model generation toward or away from specific behaviors (e.g., honesty, refusal, or sentiment) without the need for fine-tuning. 
+
+A foundational method is **Contrastive Activation Addition (CAA)**, where a steering vector $v_{(b,\ell)}$ is computed as the difference between mean activations of positive ($c^+$) and negative ($c^-$) behavior completions:
+
+$$v_{(b,\ell)} = \frac{1}{|D_b|} \sum_{(p_i,c^+_i,c^-_i) \in D_b} [ a_\ell(p_i, c^+_i) - a_\ell(p_i, c^-_i) ]$$
+
+In traditional dense steering, this vector is added directly to the hidden state $a^t_\ell$ during the forward pass, scaled by a strength parameter $\lambda$:
+$$\tilde{a}^t_\ell = a^t_\ell + \lambda \cdot v_{(b,\ell)}$$
+
+#### **The SAS Inference Mechanism**
+
+The core innovation of SAS is performing this steering within the **sparse latent space** provided by a **Sparse Autoencoder (SAE)**. This avoids the "entanglement" of features inherent in dense vectors.
+
+**The Steering Pipeline:**
+1.  **Encoding:** Dense activations $a$ from layer $\ell$ are mapped to sparse features using the SAE encoder: 
+    $$f(a) = \sigma(W_{enc}a + b_{enc})$$
+2.  **Sparse Injection:** The pre-computed SAS steering vector is added to these sparse features, scaled by $\lambda$.
+3.  **Consistency Check:** The modified sparse representation is passed through the SAE non-linearity $\sigma$ again. This ensures the steered activations remain within the learned sparse distribution.
+4.  **Decoding:** The steered sparse features are projected back into the original dense activation space via the SAE decoder to continue the model's forward pass.
+
+> **Note on Classifier Guidance:** Mathematically, activation steering shares a lineage with classifier-based guidance in diffusion models. Under a linear classifier assumption, both methods converge on the same principle of shifting representations along a gradient toward a target class or behavior.
+
+#### **Sparse Autoencoders (SAEs)**
+
+**The Challenge: Superposition**
+Large Language Models often compress more concepts than they have available dimensions in their internal representations. This leads to **superposition**—a phenomenon where unrelated concepts become entangled within the same neurons. While efficient for the model, it makes precise control and interpretability nearly impossible.
+
+**The Solution: Dictionary Learning**
+SAEs address superposition by decomposing dense activations into a high-dimensional, sparse, and ideally **monosemantic** (single-meaning) feature space.
+
+**Architecture & Mechanics**
+An SAE uses an encoder-decoder structure to map a dense activation vector $a \in \mathbb{R}^n$ to a sparse latent representation $f(a) \in \mathbb{R}^M$ (where $M \gg n$):
+
+* **Encoder:** $f(a) = \sigma(W_{enc}a + b_{enc})$
+* **Decoder:** $\hat{a}(f) = W_{dec}f + b_{dec}$
+
+The activation function $\sigma$ (such as ReLU, TopK, or JumpReLU) is critical as it enforces the **sparsity** of the representation.
+
+**Training Objectives**
+SAEs are trained by balancing two competing goals in the loss function $L(a)$:
+1.  **Reconstruction Loss:** $\|a - \hat{a}(f(a))\|^2_2$ — ensures the decoded output faithfully matches the original input.
+2.  **Sparsity Penalty:** $\lambda \cdot \|f(a)\|_1$ — minimizes the number of active features, forcing the model to find the most "important" disentangled directions.
+
+**Interpretability & Control**
+The reconstructed activation can be viewed as a linear combination of "dictionary directions" (columns of the decoder matrix $d_i$):
+$$\hat{a}(f) = \sum_{i=1}^{M} f_i \cdot d_i$$
+
+Because only a small subset of features $f_i$ are active at any time, SAEs allow for **modular control**. Specific behaviors can be isolated, adjusted, or suppressed independently without the interference typical of dense representation spaces.
+
+#### **3. Method: Sparse Activation Steering (SAS)**
+
+Previous attempts to steer in sparse spaces faced two main hurdles:
+1. **Unsupervised Feature Reliance:** Assuming SAE features are perfectly monosemantic is risky; many complex behaviors are actually composed of multiple sub-features.
+2. **Dense-to-Sparse Mapping Issues:** Directly encoding "dense steering vectors" into SAEs fails because these vectors often fall outside the SAE's training distribution and contain negative values that the SAE (using ReLU/non-negative activations) cannot process.
+
+
+Instead of converting dense vectors, SAS derives steering vectors **directly from the sparse representation** using a contrastive approach.
+
+**The 6-Step Generation Process:**
+1. **Contrastive Pairing:** Use datasets $D_b$ with prompts $p_i$ and contrastive completions ($c^+$ for desired behavior, $c^-$ for opposite).
+2. **Sparse Extraction:** Extract sparse latent matrices $S^+$ and $S^-$ for the layer $\ell$ using the SAE encoder $f_\ell$.
+3. **Mean Activation:** Compute sample means $v^+$ and $v^-$ for features. A threshold $\tau$ is used to keep only features that appear consistently across a fraction of the prompts.
+4. **Feature Isolation:** Identify and **remove shared features** (set to zero) that appear in both $v^+$ and $v^-$. This eliminates "noise" like shared syntax or positional artifacts, leaving only behavior-specific features.
+5. **Vector Composition:** The final SAS vector is defined as:
+   $$v_{(b,\ell)} = v^+_{(b,\ell)} - v^-_{(b,\ell)}$$
+   The positive term reinforces desired traits, while the negative term suppresses contradictory model tendencies.
+
+
+During generation, the model's activations are modified in the sparse space while maintaining the structural integrity of the SAE.
+
+**The Steering Equation:**
+$$\tilde{a}^t_\ell = \hat{a}^t_\ell \left( \sigma ( f(a^t_\ell) + \lambda \cdot v_{(b,\ell)} ) \right) + \Delta$$
+
+* **$\lambda$ (Steering Strength):** A tunable scalar. $\lambda > 0$ amplifies the behavior; $\lambda < 0$ suppresses it.
+* **$\sigma$ (Non-linearity):** Re-applied in the sparse space to ensure the resulting activations remain within the valid non-negative distribution.
+* **$\Delta$ (Correction Term):** Defined as $\Delta := a^t_\ell - \hat{a}^t_\ell(f(a^t_\ell))$. This compensates for the SAE's reconstruction error, ensuring the model's performance doesn't degrade due to imperfect encoding/decoding.
+
+#### **Experimental Results & Outlook**
+
+**Key Achievements**
+* **Successful Steering:** SAS effectively modulates 7 core behaviors (e.g., refusal, hallucination, sycophancy) in **Gemma-2 (2B/9B)**.
+* **Bidirectional Control:** Positive $\lambda$ reinforces behaviors, while negative $\lambda$ suppresses intrinsic model biases.
+* **Robust Transferability:** SAEs trained on base models transfer effectively to **instruction-tuned** versions with minimal loss.
+
+**Core Parameters**
+* **Threshold ($\tau$):** Controls feature consistency. Lower $\tau$ (0.7) yields stronger shifts; higher $\tau$ (0.9) isolates "core" monosemantic features.
+* **Strength ($\lambda$):** Acts as a linear "volume knob" for behaviors. Increasing $\lambda$ from $\pm 1$ to $\pm 2$ intensifies the effect without collapsing model coherence.
+
+**Perspectives**
+* **Modular Alignment:** Sparse spaces allow for **feature compositionality**, enabling the simultaneous and independent adjustment of multiple traits.
+* **Surgical Safety:** Provides a path for high-precision safety interventions by targeting specific features rather than broad, dense directions.
+
+**Performance Across Tasks**
+* **Multiple-Choice Precision:** SAS vectors significantly shifted model probabilities toward desired behaviors in held-out tests. The most effective steering occurred in **intermediate layers** (Layers 12–14), where high-level behavioral concepts are formed.
+* **Open-Ended Generation:** Using LLM-as-a-judge (GPT-4o), the study confirmed that SAS effectively guides long-form text generation. Adding an "Answer is:" prefix further enhanced steerability.
+* **Benchmark Integrity:** Unlike fine-tuning, moderate steering ($\lambda = 1$ to $2$) maintained or even **improved performance** on standard benchmarks like MMLU and TruthfulQA (e.g., non-hallucination vectors increased factual accuracy).
+
+**Key Technical Milestones**
+* **Scaling Monosemanticity:** Increasing SAE dictionary size (up to 1M) directly improved **feature disentanglement**. Larger SAEs resulted in sparser SAS vectors, meaning fewer but more precise neurons control specific behaviors.
+* **Feature Compositionality:** Proved that multiple sparse vectors can be used simultaneously. For example, the model could be steered toward a "Myopic" behavior while independently adjusting "Gender" preferences without the two signals interfering.
+* **Behavioral Correlation:** Discovered "cross-over" features between behaviors; for instance, features used for **Refusal** overlap with those that suppress **Hallucination**, suggesting underlying semantic links in the model's latent space.
+
+**Optimization & Stability**
+* **$\Delta$ (Delta) Correction:** The researchers introduced a correction term to offset information lost during SAE encoding. This stabilized the model, especially in early layers, preventing performance fluctuations.
+* **Bidirectional Strategy:** The best results came from using both positive features (to reinforce) and negative features (to suppress), rather than one-sided steering.
+
+**Future Perspectives**
+* **Surgical Interventions:** SAS allows for context-dependent behavior modification (e.g., turning on "Factuality" only for medical queries) without permanently altering the model's weights.
+* **Scaling Potential:** Further scaling of SAEs and higher-quality contrastive data are expected to produce even more reliable and "monosemantic" control knobs for AI alignment.
+
 ### S&PTopK
 
 ### SAE PRobe
