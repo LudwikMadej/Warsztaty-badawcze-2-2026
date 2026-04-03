@@ -122,7 +122,7 @@ Earlier attempts to translate dense steering vectors into sparse spaces faced a 
 
 - **Inaccurate Reconstruction:** Passing a dense steering vector through an SAE often strips it of its original steering properties or introduces unwanted artifacts.
 - **Negative Projections:** SAEs typically operate in a **non-negative feature space** (enforced by activation functions like ReLU or JumpReLU). Dense vectors naturally contain negative values, meaning standard SAEs cannot process them correctly and discard crucial behavioral information.
-- **Mapping Errors:** Instead of cleanly activating specific sparse features, out-of-distribution dense vectors create noise across multiple neurons simultaneously, completely negating the primary benefit of sparsity—clean behavior isolation.
+- **Mapping Errors:** Instead of cleanly activating specific sparse features, out-of-distribution dense vectors create noise across multiple neurons simultaneously, completely negating the primary benefit of sparsity - clean behavior isolation.
 
 #### Proposed Solution: Sparse Activation Steering (SAS)
 
