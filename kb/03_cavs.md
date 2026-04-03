@@ -151,6 +151,17 @@ The key idea is that model activations can be expressed in terms of many **fine-
 - **Modularity**  
   Different behaviors can be combined, adjusted, or removed independently, enabling flexible control (e.g. we can increase the tendency to take risks while answering with more empathy)
 
+##### Obtaining Sparse Representations
+
+Sparse Autoencoders (SAEs) learn these representations by minimizing a combination of **reconstruction error** and a **sparsity penalty**:
+
+$$
+L(a) = \underbrace{\| a - \hat{a}(f(a)) \|_2^2}_{\text{Reconstruction Loss}} + \lambda \underbrace{\| f(a) \|_1}_{\text{Sparsity Penalty}}
+$$
+
+- The $\ell_2$ term ensures faithful reconstruction of the input activations.
+- The $\ell_1$ term enforces sparsity, keeping only a small subset of features active.
+
 #### Constructing and Applying Concept Vectors
 
 After introducing sparse representations, we now describe how specific behaviors are translated into controllable vectors and injected into the model. The key idea is to identify which sparse features correspond to a desired behavior, construct a direction that amplifies those features while suppressing opposing ones, and inject this direction into the model’s internal activations during generation, enabling targeted, fine-grained control without disrupting the model’s overall behavior.
